@@ -365,7 +365,7 @@ def get_rocm_tuning_space(use_fp16):
 
 
 def get_configs_compute_bound(use_fp16, block_quant_shape) -> list[dict[str, int]]:
-    configs: list[BenchmarkConfig] = []
+    configs: list[dict[str, int]] = []
 
     if current_platform.is_rocm():
         param_ranges = get_rocm_tuning_space(use_fp16)
@@ -400,11 +400,17 @@ def get_configs_compute_bound(use_fp16, block_quant_shape) -> list[dict[str, int
     if block_quant_shape is not None and not use_fp16:
         block_n, block_k = block_quant_shape[0], block_quant_shape[1]
         for config in configs[:]:
-            if (
-                config["BLOCK_SIZE_K"] % block_k != 0
-                or config["BLOCK_SIZE_N"] % block_n != 0
+            if config["BLOCK_SIZE_K"] % block_k != 0 or (
+                block_n != 0 and config["BLOCK_SIZE_N"] % block_n != 0
             ):
                 configs.remove(config)
+
+    if not use_fp16 and block_quant_shape is not None and block_quant_shape[0] == 0:
+        # int4_w4a16: moe_wna16_gemm requires BLOCK_SIZE_M <= 64
+        for config in configs[:]:
+            if config["BLOCK_SIZE_M"] > 64:
+                configs.remove(config)
+
     return configs
 
 
@@ -799,6 +805,18 @@ def get_model_params(config):
         # Pixtral can contain different LLM architectures,
         # recurse to get their parameters
         return get_model_params(config.get_text_config())
+    elif config.architectures[0] == "Qwen3_5MoeForConditionalGeneration":
+        tc = config.text_config
+        if isinstance(tc, dict):
+            E = tc["num_experts"]
+            topk = tc["num_experts_per_tok"]
+            intermediate_size = tc["moe_intermediate_size"]
+            hidden_size = tc["hidden_size"]
+        else:
+            E = tc.num_experts
+            topk = tc.num_experts_per_tok
+            intermediate_size = tc.moe_intermediate_size
+            hidden_size = tc.hidden_size
     else:
         # Support for llama4
         config = config.get_text_config()
@@ -857,7 +875,21 @@ def main(args: argparse.Namespace):
     else:
         ensure_divisibility(intermediate_size, args.tp_size, "intermediate_size")
         shard_intermediate_size = 2 * intermediate_size // args.tp_size
-    dtype = torch.float16 if current_platform.is_rocm() else config.dtype
+
+    _dtype_map = {
+        "bfloat16": torch.bfloat16,
+        "float16": torch.float16,
+        "float32": torch.float32,
+    }
+    _raw_dtype = (
+        config.text_config.dtype if hasattr(config, "text_config") else config.dtype
+    )
+    dtype = (
+        torch.float16
+        if current_platform.is_rocm()
+        else _dtype_map.get(_raw_dtype, torch.float16)
+    )
+
     use_fp8_w8a8 = args.dtype == "fp8_w8a8"
     use_int8_w8a16 = args.dtype == "int8_w8a16"
     use_int4_w4a16 = args.dtype == "int4_w4a16"
@@ -889,12 +921,6 @@ def main(args: argparse.Namespace):
             96,
             128,
             256,
-            512,
-            1024,
-            1536,
-            2048,
-            3072,
-            4096,
         ]
     else:
         batch_sizes = args.batch_size
@@ -934,7 +960,7 @@ def main(args: argparse.Namespace):
         # apply: the gptq_awq kernel handles arbitrary BLOCK_SIZE_K regardless
         # of group_size. Skip block_quant_shape filtering to keep the full
         # search space (e.g. BLOCK_SIZE_K=64 with group_size=128).
-        tune_block_quant_shape = None if use_int4_w4a16 else block_quant_shape
+        tune_block_quant_shape = block_quant_shape
         search_space = get_configs_compute_bound(is_fp16, tune_block_quant_shape)
         if use_int4_w4a16:
             # SPLIT_K is a required kernel constexpr for gptq_awq kernel;
