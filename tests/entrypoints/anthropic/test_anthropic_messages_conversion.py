@@ -635,3 +635,36 @@ class TestThinkingBlockConversion:
         # Redacted thinking is ignored, normal thinking still becomes reasoning.
         assert asst.get("reasoning") == "Thinking..."
         assert asst.get("content") == "Hi!"
+
+
+# ======================================================================
+# thinking option handling
+# ======================================================================
+
+
+class TestThinkingOption:
+    def test_thinking_enabled_sets_enable_thinking_true(self):
+        request = _make_request(
+            [{"role": "user", "content": "hello"}],
+            thinking={"type": "enabled"},
+        )
+
+        result = _convert(request)
+        assert result.chat_template_kwargs == {"enable_thinking": True}
+
+    def test_thinking_disabled_sets_enable_thinking_false(self):
+        request = _make_request(
+            [{"role": "user", "content": "hello"}],
+            thinking={"type": "disabled"},
+        )
+
+        result = _convert(request)
+        assert result.chat_template_kwargs == {"enable_thinking": False}
+
+    def test_missing_thinking_keeps_chat_template_kwargs_unset(self):
+        request = _make_request(
+            [{"role": "user", "content": "hello"}],
+        )
+
+        result = _convert(request)
+        assert result.chat_template_kwargs is None
