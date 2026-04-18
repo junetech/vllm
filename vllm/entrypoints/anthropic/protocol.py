@@ -96,6 +96,11 @@ class AnthropicToolChoice(BaseModel):
         return self
 
 
+class AnthropicThinkingConfig(BaseModel):
+    type: Literal["disabled", "enabled", "adaptive"]
+    budget_tokens: int | None = None
+
+
 class AnthropicMessagesRequest(BaseModel):
     """Anthropic Messages API request"""
 
@@ -111,6 +116,7 @@ class AnthropicMessagesRequest(BaseModel):
     tools: list[AnthropicTool] | None = None
     top_k: int | None = None
     top_p: float | None = None
+    thinking: AnthropicThinkingConfig | None = None
 
     # vLLM-specific fields that are not in Anthropic spec
     kv_transfer_params: dict[str, Any] | None = Field(
