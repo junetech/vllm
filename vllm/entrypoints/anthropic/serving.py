@@ -130,6 +130,7 @@ class AnthropicServingMessages(OpenAIServingChat):
         cls._handle_streaming_options(req, anthropic_request)
         cls._convert_tool_choice(anthropic_request, req)
         cls._convert_tools(anthropic_request, req)
+        cls._convert_thinking(anthropic_request, req)
         return req
 
     @classmethod
@@ -429,6 +430,22 @@ class AnthropicServingMessages(OpenAIServingChat):
         if req.tool_choice is None:
             req.tool_choice = "auto"
         req.tools = tools
+
+    @classmethod
+    def _convert_thinking(
+        cls,
+        anthropic_request: AnthropicMessagesRequest | AnthropicCountTokensRequest,
+        req: ChatCompletionRequest,
+    ) -> None:
+        """Convert Anthropic thinking to OpenAI format"""
+        if not hasattr(anthropic_request, "thinking"):
+            return
+        if anthropic_request.thinking is None:
+            return
+        enable_thinking = anthropic_request.thinking.type in {"enabled", "adaptive"}
+        kwargs = dict(req.chat_template_kwargs or {})
+        kwargs["enable_thinking"] = enable_thinking
+        req.chat_template_kwargs = kwargs
 
     async def create_messages(
         self,
